@@ -1,5 +1,7 @@
 # OpenChatCut × OpenMontage 最小验证
 
+启动和试用步骤见 [`OPENMONTAGE_RUNBOOK.md`](./OPENMONTAGE_RUNBOOK.md)。
+
 本分支用于验证：保留 OpenChatCut 现有聊天、素材和 Proposal 界面，将视频生产智能层切换为服务端 OpenMontage Hybrid Pipeline 后，能否复现 OpenMontage 已验证的内容质量。
 
 ## 固定基线
