@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import sys
+import traceback
 from datetime import datetime, timezone
 from typing import Any
 
 from .service import build_default_service
+from .debug import runtime_debug
 
 
 def _write(value: Any) -> None:
@@ -21,8 +23,17 @@ def main() -> int:
         payload = json.loads(line)
         if not isinstance(payload, dict):
             raise ValueError("request must be a JSON object")
+        workspace = payload.get("workspace") if isinstance(payload.get("workspace"), str) else None
+        run_id = payload.get("runId") if isinstance(payload.get("runId"), str) else None
+        runtime_debug("runtime.request", payload, workspace=workspace, run_id=run_id)
         service = build_default_service(event_sink=_write)
         result = service.dispatch(payload)
+        runtime_debug(
+            "runtime.result",
+            {"status": result.get("status") if isinstance(result, dict) else "events", "result": result},
+            workspace=workspace,
+            run_id=run_id,
+        )
         if payload.get("action") in {"status", "events"}:
             _write({
                 "runId": payload.get("runId"),
@@ -38,6 +49,17 @@ def main() -> int:
             run_id = payload.get("runId")  # type: ignore[possibly-undefined]
         except Exception:
             pass
+        debug_workspace = None
+        try:
+            debug_workspace = payload.get("workspace") if isinstance(payload.get("workspace"), str) else None  # type: ignore[possibly-undefined]
+        except Exception:
+            pass
+        runtime_debug(
+            "runtime.error",
+            {"type": exc.__class__.__name__, "message": str(exc), "traceback": traceback.format_exc()},
+            workspace=debug_workspace,
+            run_id=run_id,
+        )
         _write({
             "runId": run_id,
             "seq": 0,

@@ -37,6 +37,8 @@ class ModelRequest:
     stage: str
     mode: str
     messages: Sequence[JsonObject]
+    run_id: str | None = None
+    workspace: str | None = None
     tool_schemas: Sequence[JsonObject] = field(default_factory=tuple)
 
 

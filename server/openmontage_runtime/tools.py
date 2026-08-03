@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from .contracts import ComposeAdapter, JsonObject, ToolExecutor
+from .debug import runtime_debug
 from .errors import ConfigurationError, RuntimeFailure, ToolPolicyError
 
 GLOBAL_TOOL_ALLOWLIST = frozenset({
@@ -106,6 +107,16 @@ class SubprocessToolAdapter(ComposeAdapter):
             "arguments": dict(arguments),
             "context": dict(context),
         }, ensure_ascii=False)
+        workspace = str(context.get("workspace", "")) or None
+        run_id = str(context.get("runId", "")) or None
+        stage = str(context.get("stage", "")) or None
+        runtime_debug(
+            "tool.worker_request",
+            {"command": self.command, "tool": tool_name, "arguments": dict(arguments)},
+            workspace=workspace,
+            run_id=run_id,
+            stage=stage,
+        )
         try:
             completed = subprocess.run(
                 self.command,
@@ -117,7 +128,26 @@ class SubprocessToolAdapter(ComposeAdapter):
                 cwd=str(context["workspace"]),
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
+            runtime_debug(
+                "tool.worker_launch_error",
+                {"tool": tool_name, "type": exc.__class__.__name__, "message": str(exc)},
+                workspace=workspace,
+                run_id=run_id,
+                stage=stage,
+            )
             raise RuntimeFailure(f"tool worker failed to launch for '{tool_name}': {exc}") from exc
+        runtime_debug(
+            "tool.worker_response",
+            {
+                "tool": tool_name,
+                "returncode": completed.returncode,
+                "stdout": completed.stdout,
+                "stderr": completed.stderr,
+            },
+            workspace=workspace,
+            run_id=run_id,
+            stage=stage,
+        )
         if completed.returncode != 0:
             raise RuntimeFailure(
                 f"tool worker '{tool_name}' exited {completed.returncode}: {completed.stderr[-1000:]}"
@@ -132,6 +162,7 @@ class SubprocessToolAdapter(ComposeAdapter):
 
     def describe(self, names: tuple[str, ...]) -> dict[str, JsonObject]:
         """Read real OpenMontage tool contracts from the private worker."""
+        runtime_debug("tool.discovery_request", {"command": self.command, "tools": list(names)})
         try:
             completed = subprocess.run(
                 self.command,
@@ -142,7 +173,15 @@ class SubprocessToolAdapter(ComposeAdapter):
                 check=False,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
+            runtime_debug(
+                "tool.discovery_error",
+                {"type": exc.__class__.__name__, "message": str(exc)},
+            )
             raise ConfigurationError(f"OpenMontage tool worker discovery failed: {exc}") from exc
+        runtime_debug(
+            "tool.discovery_response",
+            {"returncode": completed.returncode, "stdout": completed.stdout, "stderr": completed.stderr},
+        )
         if completed.returncode != 0:
             raise ConfigurationError(
                 "OpenMontage tool worker discovery failed: " + completed.stderr[-1000:]

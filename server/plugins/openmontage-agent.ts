@@ -548,7 +548,13 @@ function defaultRuntimeLauncher(
       acceptLine(line);
     }
   });
-  child.stderr.on('data', (chunk) => { stderr = (stderr + String(chunk)).slice(-8_000); });
+  child.stderr.on('data', (chunk) => {
+    const text = String(chunk);
+    stderr = (stderr + text).slice(-64_000);
+    // Python stdout is the private JSONL protocol; diagnostics deliberately use
+    // stderr so they can be relayed without corrupting runtime events.
+    process.stderr.write(`[openmontage-runtime:${input.runId}] ${text}`);
+  });
   child.once('error', (error) => {
     if (exited) return;
     exited = true;

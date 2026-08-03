@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from .contracts import JsonObject, ModelClient, ModelRequest, RunRequest, StageDefinition
+from .debug import runtime_debug
 from .errors import ArtifactValidationError, ConfigurationError, RunConflictError, RuntimeFailure
 from .manifest import load_hybrid_stages
 from .prompts import PromptBuilder
@@ -187,6 +188,8 @@ class HybridStageRunner:
                 stage=stage.name,
                 mode=mode,
                 messages=messages,
+                run_id=str(state["runId"]),
+                workspace=str(state["workspace"]),
                 tool_schemas=self.tools.schemas_for(stage.tools_available),
             ))
             calls = response.get("tool_calls", [])
@@ -228,7 +231,13 @@ class HybridStageRunner:
             workspace=str(state["workspace"]),
         )
         self.store.emit(state, "model.started", stage=stage.name, mode="review", round=round_number)
-        response = self.model.complete_json(ModelRequest(stage=stage.name, mode="review", messages=messages))
+        response = self.model.complete_json(ModelRequest(
+            stage=stage.name,
+            mode="review",
+            messages=messages,
+            run_id=str(state["runId"]),
+            workspace=str(state["workspace"]),
+        ))
         if not isinstance(response.get("findings", []), list):
             raise RuntimeFailure("review findings must be an array")
         response.setdefault("decision", "PASS")
@@ -245,18 +254,43 @@ class HybridStageRunner:
         if not isinstance(arguments, dict):
             raise RuntimeFailure("tool call arguments must be an object")
         name = call["name"]
+        context = {
+            "runId": state["runId"],
+            "projectId": state["projectId"],
+            "workspace": state["workspace"],
+            "stage": stage.name,
+            "assets": state.get("assets", []),
+        }
+        runtime_debug(
+            "tool.call",
+            {"tool": name, "arguments": arguments, "context": context},
+            workspace=str(state["workspace"]),
+            run_id=str(state["runId"]),
+            stage=stage.name,
+        )
         self.store.emit(state, "tool.started", stage=stage.name, tool=name, arguments=arguments)
-        result = self.tools.execute(
-            name,
-            arguments,
-            {
-                "runId": state["runId"],
-                "projectId": state["projectId"],
-                "workspace": state["workspace"],
-                "stage": stage.name,
-                "assets": state.get("assets", []),
-            },
-            stage_allowlist=stage.tools_available,
+        try:
+            result = self.tools.execute(
+                name,
+                arguments,
+                context,
+                stage_allowlist=stage.tools_available,
+            )
+        except Exception as exc:
+            runtime_debug(
+                "tool.error",
+                {"tool": name, "arguments": arguments, "type": exc.__class__.__name__, "message": str(exc)},
+                workspace=str(state["workspace"]),
+                run_id=str(state["runId"]),
+                stage=stage.name,
+            )
+            raise
+        runtime_debug(
+            "tool.result",
+            {"tool": name, "result": result},
+            workspace=str(state["workspace"]),
+            run_id=str(state["runId"]),
+            stage=stage.name,
         )
         self.store.emit(state, "tool.completed", stage=stage.name, tool=name, result=result)
         return {"tool": name, "arguments": arguments, "result": result}

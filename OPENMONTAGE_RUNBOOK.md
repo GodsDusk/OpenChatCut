@@ -105,6 +105,10 @@ OPENMONTAGE_MODEL_NAME=替换为实际模型名
 # OpenMontage Tool 源码；仅由服务端 Python Worker 读取
 OPENMONTAGE_SOURCE_ROOT=/Users/zlsj/Documents/GitHub/aigc/modify_motage_open
 OPENMONTAGE_SOURCE_COMMIT=b97ad70ff23f9415dc5998569d65959d15df357f
+
+# 本地排障时开启；会记录完整提示词、模型输出、工具参数和本地素材路径
+OPENMONTAGE_DEBUG_LOG=1
+OPENMONTAGE_DEBUG_MAX_CHARS=500000
 ```
 
 注意：
@@ -113,6 +117,7 @@ OPENMONTAGE_SOURCE_COMMIT=b97ad70ff23f9415dc5998569d65959d15df357f
 - `OPENMONTAGE_MODEL_BASE_URL` 填服务根地址即可；Runtime 会在末尾补 `/chat/completions`。如果地址已经以 `/chat/completions` 结尾，也可以直接填写完整地址。
 - `OPENMONTAGE_TOOL_COMMAND` 默认留空，系统会使用内置私有 Tool Bridge。
 - 修改 `.env.local` 后需要重启 `npm run dev`。
+- `OPENMONTAGE_DEBUG_LOG=1` 只适合本地排障；日志含用户输入、服务端 Prompt、生成内容和素材真实路径，不应在公网生产环境长期启用。
 
 ## 5. 配置媒体 Provider
 
@@ -207,6 +212,30 @@ http://localhost:5199
 └── checkpoints/
 ```
 
+开启调试日志后，同一 Run 还会生成：
+
+```text
+~/.openchatcut/openmontage-runs/<runId>/.openmontage/runtime-debug.jsonl
+```
+
+`npm run dev` 所在终端也会实时打印带前缀的日志：
+
+```text
+[openmontage-runtime:<runId>] [openmontage-debug][model.request] ...
+[openmontage-runtime:<runId>] [openmontage-debug][model.http_response] ...
+[openmontage-runtime:<runId>] [openmontage-debug][model.message] ...
+[openmontage-runtime:<runId>] [openmontage-debug][tool.call] ...
+[openmontage-runtime:<runId>] [openmontage-debug][tool.result] ...
+```
+
+排查“模型没有返回合法 JSON”时，按顺序查看：
+
+1. `model.request`：最终发送的 system/user messages、Tool Schema 和请求体；
+2. `model.http_response`：模型接口返回的原始 HTTP body；
+3. `model.message`：`choices[0].message`，重点检查 `content` 是否为空、Markdown 或自然语言；
+4. `model.parsed_output`：成功解析后的 JSON；若没有该行，说明失败发生在解析阶段；
+5. `runtime.error`：完整 Python traceback。
+
 通过校验的最终视频会发布到 OpenChatCut 的媒体目录：
 
 - 未配置 `MEDIA_DIR`：`OpenChatCut/public/media/uploads/`
@@ -288,4 +317,3 @@ POC 只接受当前工程拥有、并通过 OpenChatCut 上传接口保存的媒
 - 最终结果作为一个完整视频 Clip 加入 OpenChatCut，不映射成可逐层编辑的多轨工程。
 - Run 与幂等状态仍保存在单机内存和本地文件中。
 - 尚未加入多租户鉴权、队列、额度、计费和逐工具成本确认，不可直接公网 ToC 部署。
-

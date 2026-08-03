@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .contracts import JsonObject, ModelRequest
+from .debug import runtime_debug
 from .errors import ConfigurationError, RuntimeFailure
 
 
@@ -17,6 +18,8 @@ def _json_from_content(content: Any) -> JsonObject:
     if not isinstance(content, str):
         raise RuntimeFailure("model response content is not a JSON object or string")
     candidate = content.strip()
+    if not candidate:
+        raise RuntimeFailure("model returned empty content; inspect model.message in the server debug log")
     if candidate.startswith("```"):
         lines = candidate.splitlines()
         if lines and lines[0].startswith("```"):
@@ -77,6 +80,20 @@ class OpenAICompatibleModelClient:
         }
         if request.tool_schemas:
             body["tools"] = list(request.tool_schemas)
+        runtime_debug(
+            "model.request",
+            {
+                "endpoint": endpoint,
+                "model": self.model,
+                "mode": request.mode,
+                "messages": list(request.messages),
+                "tool_schemas": list(request.tool_schemas),
+                "request_body": body,
+            },
+            workspace=request.workspace,
+            run_id=request.run_id,
+            stage=request.stage,
+        )
         raw = json.dumps(body, ensure_ascii=False).encode("utf-8")
         http_request = urllib.request.Request(
             endpoint,
@@ -89,14 +106,43 @@ class OpenAICompatibleModelClient:
         )
         try:
             with urllib.request.urlopen(http_request, timeout=self.timeout_seconds) as response:
-                payload = json.loads(response.read().decode("utf-8"))
+                response_text = response.read().decode("utf-8", errors="replace")
+                runtime_debug(
+                    "model.http_response",
+                    {"status": response.status, "headers": dict(response.headers.items()), "body": response_text},
+                    workspace=request.workspace,
+                    run_id=request.run_id,
+                    stage=request.stage,
+                )
+                payload = json.loads(response_text)
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")[:1000]
+            runtime_debug(
+                "model.http_error",
+                {"status": exc.code, "detail": detail},
+                workspace=request.workspace,
+                run_id=request.run_id,
+                stage=request.stage,
+            )
             raise RuntimeFailure(f"model HTTP {exc.code}: {detail}") from exc
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+            runtime_debug(
+                "model.transport_or_envelope_error",
+                {"type": exc.__class__.__name__, "message": str(exc)},
+                workspace=request.workspace,
+                run_id=request.run_id,
+                stage=request.stage,
+            )
             raise RuntimeFailure(f"model request failed: {exc}") from exc
         try:
             message = payload["choices"][0]["message"]
+            runtime_debug(
+                "model.message",
+                message,
+                workspace=request.workspace,
+                run_id=request.run_id,
+                stage=request.stage,
+            )
             tool_calls = message.get("tool_calls")
             if isinstance(tool_calls, list) and tool_calls:
                 normalized = []
@@ -109,7 +155,35 @@ class OpenAICompatibleModelClient:
                     if not isinstance(name, str) or not isinstance(arguments, dict):
                         raise RuntimeFailure("model returned an invalid function tool call")
                     normalized.append({"name": name, "arguments": arguments})
-                return {"tool_calls": normalized}
-            return _json_from_content(message.get("content"))
-        except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+                result = {"tool_calls": normalized}
+                runtime_debug(
+                    "model.parsed_output", result,
+                    workspace=request.workspace, run_id=request.run_id, stage=request.stage,
+                )
+                return result
+            result = _json_from_content(message.get("content"))
+            runtime_debug(
+                "model.parsed_output", result,
+                workspace=request.workspace, run_id=request.run_id, stage=request.stage,
+            )
+            return result
+        except (RuntimeFailure, json.JSONDecodeError) as exc:
+            runtime_debug(
+                "model.parse_error",
+                {"type": exc.__class__.__name__, "message": str(exc), "payload": payload},
+                workspace=request.workspace,
+                run_id=request.run_id,
+                stage=request.stage,
+            )
+            if isinstance(exc, RuntimeFailure):
+                raise
+            raise RuntimeFailure(f"model tool call arguments are not valid JSON: {exc}") from exc
+        except (KeyError, IndexError, TypeError) as exc:
+            runtime_debug(
+                "model.parse_error",
+                {"type": exc.__class__.__name__, "message": str(exc), "payload": payload},
+                workspace=request.workspace,
+                run_id=request.run_id,
+                stage=request.stage,
+            )
             raise RuntimeFailure("model response is missing choices[0].message.content") from exc
