@@ -5,13 +5,12 @@ import { useT } from '../../i18n/locale';
 import type { AgentContext } from '../../agent/context';
 import type { MediaAsset, TimelineState } from '../../editor/types';
 import { kindOf } from '../../media/upload';
-import { preloadAgentRuntime, useAgent } from '../../agent/useAgent';
+import { useOpenMontageAgent } from '../../agent/useOpenMontageAgent';
 import { useExternalAgentBridge } from '../../agent/useExternalAgentBridge';
 import { ExternalProposalCard } from './ExternalProposalCard';
 import { thinkingPhrase } from './thinkingPhrases';
 import { onSelectionRef, refPromptToken, setSelectionRefMode } from '../../agent/selection-refs';
 import { shouldBlockAutoApply } from '../../agent/skills/skillGuard';
-import { getAgentModelSnapshot, isAgentModelReady } from '../../agent/model-selection';
 import { ProposalCard } from './ProposalCard';
 import { ChatMessage } from './ChatMessage';
 import { ToolGroupRow } from './ToolGroupRow';
@@ -98,10 +97,7 @@ export function ChatPanel({ ctx, projectId, collapsed, onToggleCollapse, onPrevi
     messages, running, send, stop, enhance, proposal, applyProposal, rejectProposal, clearHistory,
     proposalStale, forceApplyProposal, reProposeStale, pendingGuard, liveTool,
     changeLog, rollbackChangeSession, canRollbackChangeSession,
-  } = useAgent(ctx, projectId);
-  useEffect(() => {
-    if (!collapsed) void preloadAgentRuntime().catch(() => undefined);
-  }, [collapsed]);
+  } = useOpenMontageAgent(ctx, projectId);
   const externalProposal = useExternalAgentBridge(ctx, projectId);
   const [input, setInput] = useState('');
   const [mode, setMode] = useState<ChatMode>('agent');
@@ -178,16 +174,14 @@ export function ChatPanel({ ctx, projectId, collapsed, onToggleCollapse, onPrevi
   }, [proposal, autoApply, applyProposal]);
 
   const submit = () => {
-    const modelReady = isAgentModelReady(getAgentModelSnapshot());
-    if (!input.trim() || running || !modelReady) return;
+    if (!input.trim() || running) return;
     send(input, { askOnly: mode === 'ask', references: selectedRefs });
     setInput('');
     setSelectedRefs([]);
     clearComposerDraft(projectId);
   };
   const runEnhance = async () => {
-    const modelReady = isAgentModelReady(getAgentModelSnapshot());
-    if (!input.trim() || enhancing || running || !modelReady) return;
+    if (!input.trim() || enhancing || running) return;
     setEnhancing(true);
     try { const improved = await enhance(input); setInput(improved); taRef.current?.focus(); }
     finally { setEnhancing(false); }
@@ -418,6 +412,7 @@ export function ChatPanel({ ctx, projectId, collapsed, onToggleCollapse, onPrevi
           selectedRefs={selectedRefs} onRemoveRef={removeRef}
           onPasteFiles={importPastedFiles} pasting={pasting > 0}
           pasteError={pasteError} onDismissPasteError={() => setPasteError(null)}
+          serverAgent
           taRef={taRef}
           placeholder={messages.length === 0 ? t('描述你想要创建的内容...') : t('告诉 AI 要做哪些修改 - @ 引用素材')} />
       </div>

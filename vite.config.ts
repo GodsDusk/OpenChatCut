@@ -58,6 +58,14 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 5199,
       strictPort: true,
+      // These files are the server-owned creative runtime. Keep them unreachable
+      // through Vite's development /@fs endpoint as well as out of browser chunks.
+      fs: {
+        deny: [
+          '.env', '.env.*', '*.{crt,pem,key,p12,pfx,cer,der}', '.npmrc',
+          '.yarnrc.yml', '**/.git/**', 'server/openmontage_runtime/**',
+        ],
+      },
       proxy: {
         // AssemblyAI transcription — key injected server-side (never in browser).
         '/assemblyai': {

@@ -122,6 +122,21 @@ export const KEY_NAMES = [
 export type KeyName = (typeof KEY_NAMES)[number];
 const SETTABLE = new Set<string>(KEY_NAMES);
 
+// Private process/runtime configuration. These names are seeded from
+// .env.local/process.env but are intentionally not accepted by POST /api/keys:
+// several are executable or filesystem paths and must never become a browser-
+// controlled command surface.
+export const SERVER_ONLY_NAMES = [
+  "OPENMONTAGE_PYTHON",
+  "OPENMONTAGE_MODEL_BASE_URL",
+  "OPENMONTAGE_MODEL_API_KEY",
+  "OPENMONTAGE_MODEL_NAME",
+  "OPENMONTAGE_SOURCE_ROOT",
+  "OPENMONTAGE_SOURCE_COMMIT",
+  "OPENMONTAGE_TOOL_COMMAND",
+] as const;
+export type ServerOnlyName = (typeof SERVER_ONLY_NAMES)[number];
+
 // Names whose VALUES may be sent to the browser (model ids / vendor routing — config,
 // not credentials). Deliberately a separate explicit list rather than derived from
 // KEY_NAMES: adding a key to the whitelist must never accidentally make it non-secret.
@@ -160,7 +175,7 @@ const envSeeded = new Set<string>(); // which keys came from .env.local / proces
 
 /** Seed the store from Vite's loaded env (+ process.env fallback). Call once at startup. */
 export function seedKeystore(env: Record<string, string>): void {
-  for (const name of KEY_NAMES) {
+  for (const name of [...KEY_NAMES, ...SERVER_ONLY_NAMES]) {
     const v = (env[name] ?? process.env[name] ?? "").trim();
     if (v) {
       store.set(name, v);
@@ -212,6 +227,11 @@ export function planLegacyLlmMigration(
 
 /** Live value for a key (runtime override wins over the .env.local seed). '' if unset. */
 export function getKey(name: KeyName): string {
+  return store.get(name) ?? "";
+}
+
+/** Private runtime value; never returned by settings/key-status endpoints. */
+export function getServerOnly(name: ServerOnlyName): string {
   return store.get(name) ?? "";
 }
 

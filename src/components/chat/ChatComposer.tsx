@@ -4,7 +4,7 @@ import { getLocale, useT } from '../../i18n/locale';
 import type { AgentReference } from '../../agent/context';
 import { isSelectionRefKind } from '../../agent/selection-refs';
 import { Icon, type IconName } from '../icons';
-import { CREATIVE_SKILLS, allCreativeSkills, findSkill, setCustomSkills } from '../../agent/skills/skills-catalog';
+import { CREATIVE_SKILLS, allCreativeSkills, findSkill, setCustomSkills } from '../../agent/skills/browser-skill-catalog';
 import { loadCustomSkills } from '../../persist/skillStore';
 import { loadAgentSettings, saveAgentSettings, MG_TIERS, type AgentSettings, type MgTier } from '../../agent/settings/agentSettings';
 import { usePersistedState } from '../../hooks/usePersistedState';
@@ -56,6 +56,8 @@ interface ChatComposerProps {
   /** last paste import error, or null */
   pasteError?: string | null;
   onDismissPasteError?: () => void;
+  /** Server-owned Agent runs do not require a browser-configured LLM provider. */
+  serverAgent?: boolean;
   taRef: RefObject<HTMLTextAreaElement | null>;
   placeholder?: string;
 }
@@ -120,7 +122,7 @@ export function ChatComposer(props: ChatComposerProps) {
     autoApply, onAutoApplyChange, selecting, onToggleSelecting,
     creativeMode, onCreativeModeChange, references, onInsertRef,
     selectedRefs = [], onRemoveRef, onPasteFiles, pasting, pasteError, onDismissPasteError,
-    taRef, placeholder,
+    serverAgent = false, taRef, placeholder,
   } = props;
   // Hydration custom skill (manage_skill): read IDB → memory registry when mounting, bump triggers re-rendering
   // Make allCreativeSkills()/findSkill reflect custom skills. The real source is IDB, and the manage_skill tool is also the same.
@@ -155,7 +157,7 @@ export function ChatComposer(props: ChatComposerProps) {
       return p;
     });
   };
-  const modelReady = isAgentModelReady(modelState);
+  const modelReady = serverAgent || isAgentModelReady(modelState);
   const canSend = !!value.trim() && !running && modelReady;
   const canEnhance = !!value.trim() && !enhancing && !running && modelReady;
   const sendTitle = modelReady

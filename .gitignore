@@ -11,6 +11,8 @@ test-results/
 /output/
 .vite/
 *.tsbuildinfo
+__pycache__/
+*.py[cod]
 
 # OS / editor / temporary files
 *.log
@@ -58,6 +60,8 @@ CLAUDE.md
 AGENTS.md
 .codex/
 .agents/
+!server/openmontage_runtime/resources/.agents/
+!server/openmontage_runtime/resources/.agents/**
 .claude/
 # Impeccable design-hook state and configuration
 .impeccable/
