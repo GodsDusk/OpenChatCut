@@ -29,8 +29,9 @@ class NoopValidator:
 
 
 class FakeModel:
-    def __init__(self, output_path: Path | None = None):
+    def __init__(self, output_path: Path | None = None, bare_stage: str | None = None):
         self.output_path = output_path
+        self.bare_stage = bare_stage
         self.calls: list[tuple[str, str]] = []
 
     def preflight(self):
@@ -58,6 +59,8 @@ class FakeModel:
                 "final_review": {},
             },
         }
+        if request.stage == self.bare_stage:
+            return {"version": "1.0"}
         return {"artifacts": values[request.stage], "tool_calls": []}
 
 
@@ -145,6 +148,31 @@ def test_run_checkpoints_approval_stages_then_completes(tmp_path):
     }
     assert events[-1]["type"] == "run.completed"
     assert (tmp_path / ".openmontage" / "runs" / "run-1" / "checkpoints" / "compose.json").is_file()
+
+
+def test_single_output_stage_accepts_bare_schema_valid_artifact(tmp_path):
+    events = []
+    store = FileRunStore(event_sink=events.append)
+    tools = ToolRegistry()
+    tools.register("video_compose", lambda arguments, context: {"ok": True})
+    tools.register("audio_mixer", lambda arguments, context: {"ok": True})
+    model = FakeModel(tmp_path / "final.mp4", bare_stage="scene_plan")
+    runner = HybridStageRunner(
+        model,
+        tools,
+        store,
+        prompt_builder=FakePromptBuilder(),
+        validator=NoopValidator(),
+    )
+    service = RuntimeService(runner, store)
+
+    service.start(start_payload(tmp_path))
+    service.approve({"runId": "run-1", "workspace": str(tmp_path), "stage": "idea"})
+    state = service.approve({"runId": "run-1", "workspace": str(tmp_path), "stage": "script"})
+
+    assert state["status"] == "awaiting_approval"
+    assert state["artifacts"]["scene_plan"] == {"version": "1.0"}
+    assert events[-1]["stage"] == "scene_plan"
 
 
 def test_cancel_is_persisted_and_idempotent(tmp_path):

@@ -5,6 +5,7 @@ import shlex
 import subprocess
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Mapping
 
 from .contracts import ComposeAdapter, JsonObject, ToolExecutor
@@ -213,5 +214,6 @@ class SubprocessToolAdapter(ComposeAdapter):
 
 
 def bundled_worker_command() -> list[str]:
-    """Use the same interpreter for the bundled, server-only OpenMontage bridge."""
-    return [sys.executable, "-m", "server.openmontage_runtime.openmontage_tool_worker"]
+    """Use an absolute entrypoint so the worker can run from an isolated workspace."""
+    worker = Path(__file__).with_name("openmontage_tool_worker.py").resolve()
+    return [sys.executable, str(worker)]

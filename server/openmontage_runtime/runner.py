@@ -203,6 +203,8 @@ class HybridStageRunner:
                 continue
             artifacts = response.get("artifacts")
             if not isinstance(artifacts, dict):
+                artifacts = self._normalize_single_artifact_response(state, stage, response)
+            if artifacts is None:
                 raise ArtifactValidationError(f"stage '{stage.name}' returned no artifacts object")
             missing = [name for name in stage.produces if name not in artifacts]
             if missing:
@@ -214,6 +216,34 @@ class HybridStageRunner:
                 self.validator.validate(name, value)
             return selected
         raise RuntimeFailure(f"stage '{stage.name}' did not finish")
+
+    def _normalize_single_artifact_response(
+        self,
+        state: JsonObject,
+        stage: StageDefinition,
+        response: JsonObject,
+    ) -> JsonObject | None:
+        """Accept a schema-valid artifact when the model omitted only the response envelope."""
+        if len(stage.produces) != 1 or not response:
+            return None
+        artifact_name = stage.produces[0]
+        named_artifact = response.get(artifact_name)
+        if isinstance(named_artifact, dict):
+            artifact = named_artifact
+            source_shape = "named_artifact"
+        else:
+            artifact = {key: value for key, value in response.items() if key != "tool_calls"}
+            if not artifact:
+                return None
+            source_shape = "bare_artifact"
+        runtime_debug(
+            "model.contract_normalized",
+            {"artifact": artifact_name, "source_shape": source_shape},
+            workspace=str(state["workspace"]),
+            run_id=str(state["runId"]),
+            stage=stage.name,
+        )
+        return {artifact_name: artifact}
 
     def _review(
         self,

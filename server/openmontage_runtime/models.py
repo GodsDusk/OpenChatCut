@@ -12,14 +12,20 @@ from .debug import runtime_debug
 from .errors import ConfigurationError, RuntimeFailure
 
 
+class _InvalidModelOutput(RuntimeFailure):
+    """The transport succeeded, but the assistant output violated the JSON contract."""
+
+
 def _json_from_content(content: Any) -> JsonObject:
     if isinstance(content, dict):
         return content
     if not isinstance(content, str):
-        raise RuntimeFailure("model response content is not a JSON object or string")
+        raise _InvalidModelOutput("model response content is not a JSON object or string")
     candidate = content.strip()
     if not candidate:
-        raise RuntimeFailure("model returned empty content; inspect model.message in the server debug log")
+        raise _InvalidModelOutput(
+            "model returned empty content; inspect model.message in the server debug log"
+        )
     if candidate.startswith("```"):
         lines = candidate.splitlines()
         if lines and lines[0].startswith("```"):
@@ -30,9 +36,9 @@ def _json_from_content(content: Any) -> JsonObject:
     try:
         value = json.loads(candidate)
     except json.JSONDecodeError as exc:
-        raise RuntimeFailure(f"model did not return valid JSON: {exc}") from exc
+        raise _InvalidModelOutput(f"model did not return valid JSON: {exc}") from exc
     if not isinstance(value, dict):
-        raise RuntimeFailure("model JSON response must be an object")
+        raise _InvalidModelOutput("model JSON response must be an object")
     return value
 
 
@@ -42,6 +48,7 @@ class OpenAICompatibleModelClient:
     api_key: str
     model: str
     timeout_seconds: float = 120.0
+    max_json_retries: int = 1
 
     @classmethod
     def from_env(cls) -> "OpenAICompatibleModelClient":
@@ -68,13 +75,50 @@ class OpenAICompatibleModelClient:
             raise ConfigurationError("OpenMontage model client has empty base_url, api_key, or model")
 
     def complete_json(self, request: ModelRequest) -> JsonObject:
+        messages = list(request.messages)
+        for attempt in range(self.max_json_retries + 1):
+            try:
+                return self._complete_json_once(request, messages, attempt=attempt)
+            except _InvalidModelOutput as exc:
+                if attempt >= self.max_json_retries:
+                    raise
+                runtime_debug(
+                    "model.format_retry",
+                    {
+                        "attempt": attempt + 1,
+                        "max_retries": self.max_json_retries,
+                        "message": str(exc),
+                    },
+                    workspace=request.workspace,
+                    run_id=request.run_id,
+                    stage=request.stage,
+                )
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "Your previous response violated the response contract. "
+                        "Return exactly one valid JSON object now, with no prose, Markdown, "
+                        "or description of future actions. Use only the registered tools listed "
+                        "in the request. If no suitable tool is available, complete the required "
+                        "artifacts from the known inputs and record uncertainty inside the JSON."
+                    ),
+                })
+        raise AssertionError("unreachable")
+
+    def _complete_json_once(
+        self,
+        request: ModelRequest,
+        messages: list[JsonObject],
+        *,
+        attempt: int,
+    ) -> JsonObject:
         self.preflight()
         endpoint = self.base_url.rstrip("/")
         if not endpoint.endswith("/chat/completions"):
             endpoint += "/chat/completions"
         body: JsonObject = {
             "model": self.model,
-            "messages": list(request.messages),
+            "messages": messages,
             "response_format": {"type": "json_object"},
             "temperature": 0.2,
         }
@@ -86,7 +130,8 @@ class OpenAICompatibleModelClient:
                 "endpoint": endpoint,
                 "model": self.model,
                 "mode": request.mode,
-                "messages": list(request.messages),
+                "attempt": attempt + 1,
+                "messages": messages,
                 "tool_schemas": list(request.tool_schemas),
                 "request_body": body,
             },
@@ -153,7 +198,7 @@ class OpenAICompatibleModelClient:
                     if isinstance(arguments, str):
                         arguments = json.loads(arguments)
                     if not isinstance(name, str) or not isinstance(arguments, dict):
-                        raise RuntimeFailure("model returned an invalid function tool call")
+                        raise _InvalidModelOutput("model returned an invalid function tool call")
                     normalized.append({"name": name, "arguments": arguments})
                 result = {"tool_calls": normalized}
                 runtime_debug(
@@ -177,7 +222,9 @@ class OpenAICompatibleModelClient:
             )
             if isinstance(exc, RuntimeFailure):
                 raise
-            raise RuntimeFailure(f"model tool call arguments are not valid JSON: {exc}") from exc
+            raise _InvalidModelOutput(
+                f"model tool call arguments are not valid JSON: {exc}"
+            ) from exc
         except (KeyError, IndexError, TypeError) as exc:
             runtime_debug(
                 "model.parse_error",
